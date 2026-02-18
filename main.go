@@ -1,11 +1,14 @@
 package main
 
 import(
-	"fmt";
-	"bufio";
-	"os";
-	"net/http";
-	"encoding/json";
+	"fmt"
+	"bufio"
+	"os"
+	"net/http"
+	"encoding/json"
+	pokecache "github.com/NguyenVuAnNhan/pokedexcli/internal/pokecache"
+	"time"
+	"io"
 )
 
 type cliCommand struct {
@@ -17,6 +20,7 @@ type cliCommand struct {
 type config struct {
 	Next *string
 	Previous *string
+	Cache *pokecache.Cache
 }
 
 type apiResponse[T any] struct {
@@ -66,9 +70,12 @@ func initCommands(cfg *config) map[string]cliCommand {
 func main(){
 	startURL := "https://pokeapi.co/api/v2/location-area"
 
+	cache := pokecache.NewCache(5 * time.Second)
+
 	cfg := &config{
 		Next: &startURL,
 		Previous: nil,
+		Cache: cache,
 	}
 	cliCommands := initCommands(cfg)
 
@@ -98,7 +105,7 @@ func commandExit(_cfg *config) error {
 
 func commandHelp(cliCommands map[string]cliCommand, _cfg *config) error {
 	fmt.Println("Welcome to the Pokedex!")
-	fmt.Println("Usage:\n")
+	fmt.Println("Usage:")
 	for _, cmd := range cliCommands {
 		fmt.Printf("  %s: %s\n", cmd.name, cmd.description)
 	}
@@ -106,85 +113,99 @@ func commandHelp(cliCommands map[string]cliCommand, _cfg *config) error {
 }
 
 func commandMap(cfg *config) error {
-	var resp apiResponse[locationArea]
-
 	if cfg.Next == nil {
 		fmt.Println("No more locations to display")
 		return nil
 	}
 
-	res, err := http.Get(*cfg.Next)
+	var resp apiResponse[locationArea]
+	var res *http.Response
+	var err error
+	var data []byte
+	url := *cfg.Next
+
+	if cached, exists := cfg.Cache.Get(url); exists {
+		fmt.Println("cache hit:", url)
+		data = cached
+	} else {
+		fmt.Println("cache miss:", url)
+		res, err = http.Get(url)
+		if err != nil {
+			return err
+		}
+		defer res.Body.Close()
+
+		if res.StatusCode != http.StatusOK {
+			return fmt.Errorf("unexpected status: %s", res.Status)
+		}
+
+		data, err = io.ReadAll(res.Body)
+		if err != nil {
+			return err
+		}
+		cfg.Cache.Add(url, data)
+	}
+
+	err = json.Unmarshal(data, &resp)
 	if err != nil {
 		return err
 	}
-	defer res.Body.Close()
-
-	if res.StatusCode != http.StatusOK {
-		return fmt.Errorf("unexpected status: %s", res.Status)
-	}
-
-	err = json.NewDecoder(res.Body).Decode(&resp)
-	if err != nil {
-		return err
-	}
-
-	// fmt.Println(resp)
 
 	for _, location := range resp.Results {
 		fmt.Println(location.Name)
 	}
 
-	if resp.Previous != nil {
-		cfg.Previous = resp.Previous
-	} else {
-		cfg.Previous = nil
-	}
-	if resp.Next != nil {
-		cfg.Next = resp.Next
-	} else {
-		cfg.Next = nil
-	}
+	cfg.Previous = resp.Previous
+	cfg.Next = resp.Next
+
 	return nil
 }
 
 func commandMapBack(cfg *config) error {
-	var resp apiResponse[locationArea]
-
 	if cfg.Previous == nil {
 		fmt.Println("you're on the first page")
 		return nil
 	}
 
-	res, err := http.Get(*cfg.Previous)
+	var resp apiResponse[locationArea]
+	var res *http.Response
+	var data []byte
+	var err error
+	url := *cfg.Previous
+
+	if cached, exists := cfg.Cache.Get(url); exists {
+		fmt.Println("cache hit:", url)
+		data = cached
+	} else {
+		fmt.Println("cache miss:", url)
+		res, err = http.Get(url)
+		if err != nil {
+			return err
+		}
+		defer res.Body.Close()
+
+		if res.StatusCode != http.StatusOK {
+			return fmt.Errorf("unexpected status: %s", res.Status)
+		}
+
+		data, err = io.ReadAll(res.Body)
+		if err != nil {
+			return err
+		}
+		cfg.Cache.Add(url, data)
+	}
+
+	err = json.Unmarshal(data, &resp)
 	if err != nil {
 		return err
 	}
-	defer res.Body.Close()
-
-	if res.StatusCode != http.StatusOK {
-		return fmt.Errorf("unexpected status: %s", res.Status)
-	}
-
-	err = json.NewDecoder(res.Body).Decode(&resp)
-	if err != nil {
-		return err
-	}
-
-	// fmt.Println(resp)
 
 	for _, location := range resp.Results {
 		fmt.Println(location.Name)
 	}
 
-	if resp.Previous != nil {
-		cfg.Previous = resp.Previous
-	} else {
-		cfg.Previous = nil
-	}
-	if resp.Next != nil {
-		cfg.Next = resp.Next
-	} else {
-		cfg.Next = nil
-	}
+	cfg.Previous = resp.Previous
+	cfg.Next = resp.Next
+
 	return nil
 }
