@@ -9,6 +9,7 @@ import(
 	pokecache "github.com/NguyenVuAnNhan/pokedexcli/internal/pokecache"
 	"time"
 	"io"
+	"math/rand"
 )
 
 type cliCommand struct {
@@ -21,6 +22,7 @@ type config struct {
 	Next *string
 	Previous *string
 	Cache *pokecache.Cache
+	Pokedex Pokedex
 }
 
 type apiResponse[T any] struct {
@@ -39,13 +41,22 @@ type PokemonList struct {
 }
 
 type PokemonEncounter struct {
-    Pokemon        Pokemon `json:"pokemon"`
+    Pokemon        PokemonEntry `json:"pokemon"`
     VersionDetails []any   `json:"version_details"` // ignore for now
+}
+
+type PokemonEntry struct {
+	Name string `json:"name"`
+	URL string `json:"url"`
 }
 
 type Pokemon struct {
 	Name string `json:"name"`
-	URL string `json:"url"`
+	BaseExperience int `json:"base_experience"`
+}
+
+type Pokedex struct {
+	Caught map[string]Pokemon
 }
 
 func initCommands(cfg *config) map[string]cliCommand {
@@ -88,6 +99,16 @@ func initCommands(cfg *config) map[string]cliCommand {
 			return commandExplore(cfg, args[0])
 		},
 	}
+	commands["catch"] = cliCommand{
+		name: "catch",
+		description: "Catch a pokemon and add it to your pokedex",
+		callback: func(args []string) error {
+			if len(args) == 0 {
+				return fmt.Errorf("missing target pokemon")
+			}
+			return commandCatch(cfg, args[0])
+		},
+	}
 	return commands
 }
 
@@ -96,10 +117,15 @@ func main(){
 
 	cache := pokecache.NewCache(5 * time.Second)
 
+	pokedex := Pokedex{
+		Caught: make(map[string]Pokemon),
+	}
+
 	cfg := &config{
 		Next: &startURL,
 		Previous: nil,
 		Cache: cache,
+		Pokedex: pokedex,
 	}
 	cliCommands := initCommands(cfg)
 
@@ -276,6 +302,52 @@ func commandExplore(cfg *config, target string) error {
 
 	for _, pokemonEncounter := range pokemonList.PokemonEncounters {
 		fmt.Println(" -", pokemonEncounter.Pokemon.Name)
+	}
+
+	return nil
+}
+
+func commandCatch(cfg *config, target string) error {
+	var res *http.Response
+	var data []byte
+	var err error
+	url := fmt.Sprintf("https://pokeapi.co/api/v2/pokemon/%s", target)
+
+	if cached, exists := cfg.Cache.Get(url); exists {
+		// fmt.Println("cache hit:", url)
+		data = cached
+	} else {
+		// fmt.Println("cache miss:", url)
+		res, err = http.Get(url)
+		if err != nil {
+			return err
+		}
+		defer res.Body.Close()
+
+		if res.StatusCode != http.StatusOK {
+			return fmt.Errorf("unexpected status: %s", res.Status)
+		}
+
+		data, err = io.ReadAll(res.Body)
+		if err != nil {
+			return err
+		}
+		cfg.Cache.Add(url, data)
+	}
+
+	var pokemon Pokemon
+	err = json.Unmarshal(data, &pokemon)
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf("Throwing a Pokeball at %s...\n", pokemon.Name)
+
+	if rand.Float64()*700 > float64(pokemon.BaseExperience) {
+		fmt.Printf("%s was caught!\n", pokemon.Name)
+		cfg.Pokedex.Caught[pokemon.Name] = pokemon
+	} else {
+		fmt.Printf("%s escaped!\n", pokemon.Name)
 	}
 
 	return nil
