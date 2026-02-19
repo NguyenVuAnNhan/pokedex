@@ -154,6 +154,21 @@ func initCommands(cfg *config) map[string]cliCommand {
 			return nil
 		},
 	}
+	commands["pokedex"] = cliCommand{
+		name: "pokedex",
+		description: "List all the pokemons in your pokedex",
+		callback: func(args []string) error {
+			if len(cfg.Pokedex.Caught) == 0 {
+				fmt.Println("Your pokedex is empty! Go catch some pokemon!")
+				return nil
+			}
+			fmt.Println("Your Pokedex:")
+			for name := range cfg.Pokedex.Caught {
+				fmt.Printf(" - %s\n", name)
+			}
+			return nil
+		},
+	}
 	return commands
 }
 
@@ -391,6 +406,7 @@ func commandCatch(cfg *config, target string) error {
 	if rand.Float64()*700 > float64(pokemon.BaseExperience) {
 		fmt.Printf("%s was caught!\n", pokemon.Name)
 		cfg.Pokedex.Caught[pokemon.Name] = pokemon
+		fmt.Println("You may now inspect it with the inspect command.")
 	} else {
 		fmt.Printf("%s escaped!\n", pokemon.Name)
 	}
